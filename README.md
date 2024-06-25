@@ -26,3 +26,5 @@ docker run -it --gpus all docker_just_nnunet
 
 # Update the model inside the resources/ from this link:
 https://drive.google.com/drive/folders/1-PA0aCnUO6SfIqH5gYml8mSGfm59k21a?usp=sharing
+
+# Also don't forget to change input files from test/input/
