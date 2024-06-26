@@ -5,7 +5,7 @@ ENV SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL=True
 
 RUN groupadd -r user && useradd -m --no-log-init -r -g user user
 
-USER root 
+USER user 
 
 WORKDIR /opt/app
 
