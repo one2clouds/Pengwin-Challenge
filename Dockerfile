@@ -44,7 +44,7 @@ COPY --chown=user:user ./inference_docker.py /opt/app/
 COPY --chown=user:user ./base_module.py /opt/app/src/models/
 COPY --chown=user:user ./unet.py /opt/app/src/models/
 
-# ENTRYPOINT ["python", "inference_docker.py"]
+ENTRYPOINT ["python", "inference_docker.py"]
 
 
 
