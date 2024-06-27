@@ -32,7 +32,7 @@ from nnunet.inference.predict_simple import predict_from_folder
 from nnunet.training.model_restore import restore_model, load_model_and_checkpoint_files
 import numpy as np
 
-from nnUNet.nnunetv2.imageio.simpleitk_reader_writer import SimpleITKIO
+# from nnUNet.nnunetv2.imageio.simpleitk_reader_writer import SimpleITKIO
 # from nnUNet.nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 from batchgenerators.utilities.file_and_folder_operations import join
 import torch 
@@ -262,7 +262,7 @@ def run():
 
     # WE DON'T NEED TO CHANGE DIRN OF IMG HERE becoz monai transforms will do it.
 
-    output_dir_anatomical = '/home/shirshak/Just-nnUNet-not-Overridden-with-FracSegNet-in-venv/zzz_output_data_anatomical'
+    output_dir_anatomical = '/home/shirshak/Pengwin_Submission_Portal/test/output/'
 
     class HelperDataset(Dataset):
         def __init__(self, file_names, transform):
@@ -299,7 +299,7 @@ def run():
             # RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
         ])
     
-    train_images = sorted(glob("/mnt/Enterprise2/shirshak/PENGWIN_TASK/PENGWIN_CT/pa*/*.mha"))
+    train_images = sorted(glob("/home/shirshak/Pengwin_Submission_Portal/test/input/*.mha"))
     train_labels = train_images.copy() #sorted(glob("/mnt/Enterprise2/shirshak/PENGWIN_TASK/PENGWIN_CT/labels/*.mha"))
 
     data_dicts = [{"image": image_name, "label": label_name} for image_name, label_name in zip(train_images, train_labels)]
@@ -364,7 +364,6 @@ def run():
 
     # # For Frac_Seg Model 
 
-    output_dir_anatomical = '/home/shirshak/Just-nnUNet-not-Overridden-with-FracSegNet-in-venv/zzz_output_data_anatomical'
     pkl = '/home/shirshak/Just-nnUNet-not-Overridden-with-FracSegNet-in-venv/dataset/nnUNet_results/nnUNet/3d_fullres/Task600_CT_PelvicFrac150/nnUNetTrainerV2__nnUNetPlansv2.1/fold_4/model_best.model.pkl'
     checkpoint = pkl[:-4]
     train = False
@@ -420,25 +419,30 @@ def run():
         predicted_segmentation[:, :20, :] = 0
         predicted_segmentation[:, :, :20] = 0
 
-        output_dir = '/home/shirshak/Just-nnUNet-not-Overridden-with-FracSegNet-in-venv/zzz_output_data_fracsegnet'
-        sitk.WriteImage(sitk.GetImageFromArray(predicted_segmentation), join(output_dir, only_name + "_pred.nii.gz"))
-        sitk.WriteImage(sitk.GetImageFromArray(class_probabilities), join(output_dir, only_name + "_pred_prob.nii.gz"))
+        os.makedirs(join(output_dir_anatomical, 'output_data_fracsegnet'), exist_ok=True)
+        output_dir_fracsegnet = join(output_dir_anatomical, 'output_data_fracsegnet')
+
+        sitk.WriteImage(sitk.GetImageFromArray(predicted_segmentation), join(output_dir_fracsegnet, only_name + "_pred.nii.gz"))
+        sitk.WriteImage(sitk.GetImageFromArray(class_probabilities), join(output_dir_fracsegnet, only_name + "_pred_prob.nii.gz"))
 
     print('<----------Fracture Segmentation Model completed--------------------->')
 
     # img_number = ['001', '002']
     # Same operation like line above this.... but we automate it.
     img_number = set()
-    for img in sorted(glob('/home/shirshak/Just-nnUNet-not-Overridden-with-FracSegNet-in-venv/zzz_output_data_fracsegnet/*.nii.gz')):
+    for img in sorted(glob(join(output_dir_fracsegnet,'*.nii.gz'))):
         img_number.add(os.path.split(img)[1][:3])
     img_number = list(img_number)
+
+    print(f"Number of image is : {img_number}")
     
-    location = '/home/shirshak/Just-nnUNet-not-Overridden-with-FracSegNet-in-venv/zzz_output_data_fracsegnet'
+    os.makedirs(join(output_dir_anatomical, 'images/pelvic-fracture-ct-segmentation'), exist_ok=True)
+    final_output_folder = join(output_dir_anatomical, 'images/pelvic-fracture-ct-segmentation')
     for img_num in img_number:
         # print(img_num)
-        overall_mask_of_whole_img = get_overall_segmentation_of_one_img(img_num, location)
+        overall_mask_of_whole_img = get_overall_segmentation_of_one_img(img_num, output_dir_fracsegnet)
         # print(overall_mask_of_whole_img.shape)
-        sitk.WriteImage(sitk.GetImageFromArray(overall_mask_of_whole_img), join(location, f'{img_num}_overall_pred.nii.gz'))
+        sitk.WriteImage(sitk.GetImageFromArray(overall_mask_of_whole_img), join(final_output_folder, f'{img_num}_overall_pred.mha'))
 
     # # Save your output
     # # write_array_as_image_file(
