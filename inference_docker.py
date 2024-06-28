@@ -291,9 +291,11 @@ def run():
     checkpoint = pkl[:-4]
     train = False
 
+    # print(f"PKL file: {pkl}, checkpoint: {checkpoint}")
+
     trainer = restore_model(pkl, checkpoint, train)
 
-    preprocessed_img_folder =  join(output_dir_anatomical, 'splitted_fragments', 'nifty_preprocessed_into_fragments',  'images/*.nii.gz')
+    preprocessed_img_folder =  join(output_dir_anatomical, 'splitted_fragments', 'nifty_preprocessed_into_fragments',  'images/')
 
     for img_name in sorted(glob(preprocessed_img_folder)):
 
@@ -351,7 +353,7 @@ def run():
     # img_number = ['001', '002']
     # Same operation like line 304 but we automate it.
     img_number = set()
-    for img in sorted(glob(join(output_dir_fracsegnet,'*.nii.gz'))):
+    for img in sorted(glob(join(output_dir_fracsegnet))):
         img_number.add(os.path.split(img)[1][:3])
     img_number = list(img_number)
 
