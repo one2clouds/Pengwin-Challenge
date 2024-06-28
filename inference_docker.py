@@ -295,7 +295,7 @@ def run():
 
     trainer = restore_model(pkl, checkpoint, train)
 
-    preprocessed_img_folder =  join(output_dir_anatomical, 'splitted_fragments', 'nifty_preprocessed_into_fragments',  'images/')
+    preprocessed_img_folder =  join(output_dir_anatomical, 'splitted_fragments', 'nifty_preprocessed_into_fragments',  'images/*.nii.gz')
 
     for img_name in sorted(glob(preprocessed_img_folder)):
 
