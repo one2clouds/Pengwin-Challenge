@@ -25,7 +25,7 @@ COPY --chown=user:user ./resources/model_best.model.pkl /opt/app/resources/
 # RUN cp ./model_best.model.pkl /opt/app/resources
 
 # COPY Sample ct image for test
-COPY --chown=user:user ./test/input/*.mha /opt/app/input/images/pelvic-fracture-ct/
+# COPY --chown=user:user ./test/input/*.mha /opt/app/input/images/pelvic-fracture-ct/
 
 # COPY --chown=user:user ./dataset/
 

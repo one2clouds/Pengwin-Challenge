@@ -10,7 +10,7 @@ scipy==1.14.0
 SimpleITK==2.3.1
 tqdm==4.66.4
 torchvision==0.18.1
-rootutils
+rootutils==1.0.5
 # FOR monai ko error handling caused by openslider we install the monai important libraries manually
 # monai[all]==1.1.0
 scikit-image==0.24.0
