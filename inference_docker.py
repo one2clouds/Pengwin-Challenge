@@ -27,7 +27,7 @@ from batchgenerators.utilities.file_and_folder_operations import load_pickle
 
 from nnunet.inference.predict_simple import predict_from_folder
 
-from nnunet.training.model_restore import restore_model, load_model_and_checkpoint_files
+from nnunet.training.model_restore import recursive_find_python_class #, load_model_and_checkpoint_files, restore_model
 import numpy as np
 
 # from nnUNet.nnunetv2.imageio.simpleitk_reader_writer import SimpleITKIO
@@ -38,6 +38,10 @@ import os
 from scipy.ndimage import label
 from torch.utils.data import Dataset, DataLoader
 from monai.transforms import Resized, Compose, LoadImaged, Orientationd, Spacingd, EnsureTyped, EnsureChannelFirstd, AsDiscrete
+from nnunet.training.network_training.nnUNetTrainer import nnUNetTrainer
+import nnunet
+from collections import OrderedDict
+from nnunet.training.data_augmentation.default_data_augmentation import default_3D_augmentation_params
 
 
 from split_img_to_SA_LI_RI import saveDiffFrac
@@ -199,6 +203,73 @@ def get_overall_segmentation_of_one_img(str_img_number, location):
     return overall_mask
 
 
+
+# taken from nnunet.training.model_restore.py -> restore_model -> trainer.load_checkpoint() 
+def restore_model(pkl_file, checkpoint=None, train=False, fp16=None):
+    """
+    This is a utility function to load any nnUNet trainer from a pkl. It will recursively search
+    nnunet.trainig.network_training for the file that contains the trainer and instantiate it with the arguments saved in the pkl file. If checkpoint
+    is specified, it will furthermore load the checkpoint file in train/test mode (as specified by train).
+    The pkl file required here is the one that will be saved automatically when calling nnUNetTrainer.save_checkpoint.
+    :param pkl_file:
+    :param checkpoint:
+    :param train:
+    :param fp16: if None then we take no action. If True/False we overwrite what the model has in its init
+    :return:
+    """
+    info = load_pickle(pkl_file)
+    init = info['init']
+    name = info['name']
+    search_in = join(nnunet.__path__[0], "training", "network_training")
+    tr = recursive_find_python_class([search_in], name, current_module="nnunet.training.network_training")
+
+
+    if tr is None:
+        raise RuntimeError("Could not find the model trainer specified in checkpoint in nnunet.trainig.network_training. If it "
+                           "is not located there, please move it or change the code of restore_model. Your model "
+                           "trainer can be located in any directory within nnunet.trainig.network_training (search is recursive)."
+                           "\nDebug info: \ncheckpoint file: %s\nName of trainer: %s " % (checkpoint, name))
+    assert issubclass(tr, nnUNetTrainer), "The network trainer was found but is not a subclass of nnUNetTrainer. " \
+                                          "Please make it so!"
+
+    # this is now deprecated
+    """if len(init) == 7:
+        print("warning: this model seems to have been saved with a previous version of nnUNet. Attempting to load it "
+              "anyways. Expect the unexpected.")
+        print("manually editing init args...")
+        init = [init[i] for i in range(len(init)) if i != 2]"""
+
+    # ToDo Fabian make saves use kwargs, please...
+
+    trainer = tr(*init)
+
+    # We can hack fp16 overwriting into the trainer without changing the init arguments because nothing happens with
+    # fp16 in the init, it just saves it to a member variable
+    if fp16 is not None:
+        trainer.fp16 = fp16
+
+    # taken from nnunet.training.model_restore.py -> restore_model -> trainer.load_checkpoint() 
+    trainer.process_plans(info['plans'])
+    saved_model = torch.load(checkpoint, map_location=torch.device('cpu'))
+
+    # Now this(upto return statement) is taken from nnunet.training.network_trainer.network_trainer.py -> load_checkpoint -> trainer.load_checkpoint_ram function
+    new_state_dict = OrderedDict()
+
+    # curr_state_dict_keys = list(trainer.network.state_dict().keys())
+    # if state dict comes form nn.DataParallel but we use non-parallel model here then the state dict keys do not
+    # match. Use heuristic to make it match
+    for k, value in saved_model['state_dict'].items():
+        key = k
+        if key.startswith('module.'):
+            key = key[7:]
+        new_state_dict[key] = value
+
+    trainer.initialize_network()
+    trainer.network.load_state_dict(new_state_dict)
+
+    return trainer
+
+
 def run():
     # Read the input
     # pelvic_facture_ct = load_image_file_as_array(
@@ -268,7 +339,7 @@ def run():
         softmax_logits = nn.Softmax(dim=1)(logits)
         predicted_segmentation = torch.argmax(softmax_logits, 1)
         predicted_segmentation = predicted_segmentation.squeeze(dim=0)
-        only_name = os.path.split(data['image_meta_dict']['filename_or_obj'][0])[1].split('_image.mha')[0]
+        only_name = os.path.split(data['image_meta_dict']['filename_or_obj'][0])[1].split('.mha')[0]
         print(np.unique(predicted_segmentation))
 
         # # We write label just for checking what label is after passing to transforms of monai 
@@ -287,11 +358,12 @@ def run():
     # # For Frac_Seg Model 
 
     output_dir_anatomical = join(OUTPUT_PATH, 'output_data_anatomical')
+    os.makedirs(join(OUTPUT_PATH, 'output_data_fracsegnet'), exist_ok=True)
+    output_dir_fracsegnet = join(OUTPUT_PATH, 'output_data_fracsegnet')
+    
     pkl = join(RESOURCE_PATH, 'model_best.model.pkl')
     checkpoint = pkl[:-4]
     train = False
-
-    # print(f"PKL file: {pkl}, checkpoint: {checkpoint}")
 
     trainer = restore_model(pkl, checkpoint, train)
 
@@ -308,6 +380,9 @@ def run():
 
         # print(np.expand_dims(pelvic_facture_ct, axis=0).shape) # extra dimension for channel [1,416,512,512]
 
+        # We also have to put value of data_aug_params from nnunet/training/data_augumentation/default_data_augumentation.py, and since our model is 3d full res model 
+        trainer.data_aug_params = default_3D_augmentation_params
+        # trainer.data_aug_params["do_mirror"] = (0, 1, 2)
         # this will return tuple of predicted_segmentation, class_probabilities so we take only predicted segmentation
         _, class_probabilities = trainer.predict_preprocessed_data_return_seg_and_softmax(np.expand_dims(pelvic_facture_ct, axis=0)) 
 
@@ -341,10 +416,6 @@ def run():
         predicted_segmentation[:, :20, :] = 0
         predicted_segmentation[:, :, :20] = 0
 
-
-        os.makedirs(join(OUTPUT_PATH, 'output_data_fracsegnet'), exist_ok=True)
-        output_dir_fracsegnet = join(OUTPUT_PATH, 'output_data_fracsegnet')
-
         sitk.WriteImage(sitk.GetImageFromArray(predicted_segmentation), join(output_dir_fracsegnet, only_name + "_pred.nii.gz"))
         sitk.WriteImage(sitk.GetImageFromArray(class_probabilities), join(output_dir_fracsegnet, only_name + "_pred_prob.nii.gz"))
 
@@ -353,7 +424,7 @@ def run():
     # img_number = ['001', '002']
     # Same operation like line 304 but we automate it.
     img_number = set()
-    for img in sorted(glob(join(output_dir_fracsegnet))):
+    for img in sorted(glob(join(output_dir_fracsegnet, '*_pred.nii.gz'))):
         img_number.add(os.path.split(img)[1][:3])
     img_number = list(img_number)
 
