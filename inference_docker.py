@@ -328,7 +328,6 @@ def run():
         softmax_logits = nn.Softmax(dim=1)(logits)
         predicted_segmentation = torch.argmax(softmax_logits, 1)
         predicted_segmentation = predicted_segmentation.squeeze(dim=0)
-        only_name = os.path.split(data['image_meta_dict']['filename_or_obj'][0])[1].split('.mha')[0]
 
         print(np.unique(predicted_segmentation, return_counts=True))
         # print(data["image"].shape) # (1, 1, 128, 128, 128)
@@ -357,7 +356,7 @@ def run():
         print(np.unique(overall_mask, return_counts=True))
 
         os.makedirs(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation'), exist_ok=True)
-        sitk.WriteImage(sitk.GetImageFromArray(overall_mask), join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation', f'{only_name}_overall_pred.mha'))
+        sitk.WriteImage(sitk.GetImageFromArray(overall_mask), join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation', 'overall_pred.mha'))
 
     # # Save your output
     # # write_array_as_image_file(
