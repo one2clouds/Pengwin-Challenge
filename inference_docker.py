@@ -356,7 +356,7 @@ def run():
         print(np.unique(overall_mask, return_counts=True))
 
         os.makedirs(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation'), exist_ok=True)
-        sitk.WriteImage(sitk.GetImageFromArray(overall_mask), join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation', 'overall_pred.mha'), useCompression=True)
+        sitk.WriteImage(sitk.GetImageFromArray(overall_mask), join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation', 'output.mha'), useCompression=True)
 
     # # Save your output
     # # write_array_as_image_file(
