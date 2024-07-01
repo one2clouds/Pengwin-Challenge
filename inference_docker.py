@@ -134,11 +134,7 @@ def get_preds(mask_preprocessed_arr, base_value):
     mask[mask_preprocessed_arr == 6] = base_value + 6
     return mask
 
-def return_one_with_max_probability(li_mask, sa_mask, ri_mask, location, str_img_number):
-
-    li_prob = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(location, f'{str_img_number}_LI_pred_prob.nii.gz')))
-    sa_prob = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(location, f'{str_img_number}_SA_pred_prob.nii.gz')))
-    ri_prob = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(location, f'{str_img_number}_RI_pred_prob.nii.gz')))
+def return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob, sa_prob, ri_prob):
 
     # print(li_prob.shape) # (3, 128, 128, 128) #SInce there is background, class 1, class 2....
     # print(sa_prob.shape) # (3, 128, 128, 128)
@@ -171,38 +167,6 @@ def return_one_with_max_probability(li_mask, sa_mask, ri_mask, location, str_img
                 else:
                     overall_mask[i][j][k] = 0
     return overall_mask 
-
-
-
-def get_overall_segmentation_of_one_img(str_img_number, location):
-    '''
-    str_img_number: example -----> 049, 001, etc.
-    '''
-    mask_name_LI = os.path.join(location, f'{str_img_number}_LI_pred.nii.gz')
-    mask_name_SA = os.path.join(location, f'{str_img_number}_SA_pred.nii.gz')
-    mask_name_RI = os.path.join(location, f'{str_img_number}_RI_pred.nii.gz')
-
-    min_valid_object_size = 500
-
-    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(sitk.GetArrayFromImage(sitk.ReadImage(mask_name_LI)), for_which_classes=None, volume_per_voxel=float(np.prod(sitk.ReadImage(mask_name_LI).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-    li_mask = get_preds(mask_preprocessed_arr, 10)
-
-    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(sitk.GetArrayFromImage(sitk.ReadImage(mask_name_SA)), for_which_classes=None, volume_per_voxel=float(np.prod(sitk.ReadImage(mask_name_SA).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-    sa_mask = get_preds(mask_preprocessed_arr, 0)
-
-    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(sitk.GetArrayFromImage(sitk.ReadImage(mask_name_RI)), for_which_classes=None, volume_per_voxel=float(np.prod(sitk.ReadImage(mask_name_RI).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-    ri_mask = get_preds(mask_preprocessed_arr, 20)
-
-    print(np.unique(li_mask, return_counts=True))
-    print(np.unique(sa_mask, return_counts=True))
-    print(np.unique(ri_mask, return_counts=True))
-
-    overall_mask = return_one_with_max_probability(li_mask, sa_mask, ri_mask, location, str_img_number)
-
-    print(np.unique(overall_mask, return_counts=True))
-    return overall_mask
-
-
 
 # taken from nnunet.training.model_restore.py -> restore_model -> trainer.load_checkpoint() 
 def restore_model(pkl_file, checkpoint=None, train=False, fp16=None):
@@ -270,6 +234,27 @@ def restore_model(pkl_file, checkpoint=None, train=False, fp16=None):
     return trainer
 
 
+def predict_li_sa_ri_files_from_trainer(trainer, frac_img):
+    frac_array = sitk.GetArrayFromImage(frac_img)
+    _, class_probabilities = trainer.predict_preprocessed_data_return_seg_and_softmax(np.expand_dims(frac_array, axis=0)) 
+    class_probabilities_swapped = class_probabilities.copy()
+    class_probabilities_swapped[1] = class_probabilities[2]
+    class_probabilities_swapped[2] = class_probabilities[1]
+
+    predicted_segmentation = np.argmax(class_probabilities_swapped, axis=0)
+    class_probabilities = class_probabilities_swapped
+
+    # The output i.e predicted_segmentation gives 4 rectangular boxes on the endpoints, so to remove it we make the points at the end as 0
+    predicted_segmentation[-20:, :, :] = 0     # We take a default parameter 20 after experimentation 
+    predicted_segmentation[:, -20:, :] = 0
+    predicted_segmentation[:, :, -20:] = 0
+    predicted_segmentation[:20, :, :] = 0
+    predicted_segmentation[:, :20, :] = 0
+    predicted_segmentation[:, :, :20] = 0
+    
+    return predicted_segmentation, class_probabilities
+
+
 def run():
     # Read the input
     # pelvic_facture_ct = load_image_file_as_array(
@@ -281,9 +266,6 @@ def run():
 
     # FOR Anatomical Model USING UNet baseline 
     # WE DON'T NEED TO CHANGE DIRN OF IMG HERE becoz monai transforms will do it.
-
-    os.makedirs(join(OUTPUT_PATH, 'output_data_anatomical'), exist_ok=True)
-    output_dir_anatomical = join(OUTPUT_PATH, 'output_data_anatomical')
 
     class HelperDataset(Dataset):
         def __init__(self, file_names, transform):
@@ -324,15 +306,22 @@ def run():
     data_dicts = [{"image": image_name, "label": label_name} for image_name, label_name in zip(train_images, train_labels)]
 
     my_dataset = HelperDataset(data_dicts, val_transform)
-
     dataloader = DataLoader(dataset=my_dataset, batch_size=1)
 
+    # Loading Model 1 
     model = UNet(spatial_dims=3, in_channels=1, out_channels=4, channels=[16,32,64], strides=[2,2])
-
     model_file_state_dict = torch.load(join(RESOURCE_PATH, 'best.ckpt'))['state_dict']
-    
     pretrained_dict = {key.replace("net.", ""): value for key, value in model_file_state_dict.items()}
     model.load_state_dict(pretrained_dict)
+
+    # Loading Model 2
+    pkl = join(RESOURCE_PATH, 'model_best.model.pkl')
+    checkpoint = pkl[:-4]
+    train = False
+    trainer = restore_model(pkl, checkpoint, train)
+    # We also have to put value of data_aug_params from nnunet/training/data_augumentation/default_data_augumentation.py, and since our model is 3d full res model 
+    trainer.data_aug_params = default_3D_augmentation_params
+
 
     for data in dataloader:
         logits = model.forward(**data)
@@ -340,103 +329,35 @@ def run():
         predicted_segmentation = torch.argmax(softmax_logits, 1)
         predicted_segmentation = predicted_segmentation.squeeze(dim=0)
         only_name = os.path.split(data['image_meta_dict']['filename_or_obj'][0])[1].split('.mha')[0]
-        print(np.unique(predicted_segmentation))
 
-        # # We write label just for checking what label is after passing to transforms of monai 
-        # sitk.WriteImage(sitk.GetImageFromArray(data["label"]), join(output_dir_anatomical, only_name+'_label.nii.gz'))
-        
-        # We write image as well because we have resized the image so, while passing to saveDiffFrac img & label should be same size
-        sitk.WriteImage(sitk.GetImageFromArray(data["image"]), join(output_dir_anatomical, only_name+'_image.nii.gz'))
-        sitk.WriteImage(sitk.GetImageFromArray(predicted_segmentation), join(output_dir_anatomical, only_name + '_pred.nii.gz'))
+        print(np.unique(predicted_segmentation, return_counts=True))
+        # print(data["image"].shape) # (1, 1, 128, 128, 128)
+        # print(predicted_segmentation.shape) # (128, 128, 128)
+        frac_LeftIliac_img, frac_sacrum_img, frac_RightIliac_img = saveDiffFrac(sitk.GetImageFromArray(data["image"][0][0]), sitk.GetImageFromArray(predicted_segmentation))
+        print('<----------Anatomical Model baseline unet completed--------------------->')
 
-        os.makedirs(join(output_dir_anatomical, 'splitted_fragments'), exist_ok=True)
-        saveDiffFrac(join(output_dir_anatomical, only_name + '_image.nii.gz'), join(output_dir_anatomical, only_name + '_pred.nii.gz'), join(output_dir_anatomical,'splitted_fragments'))
+        predicted_frac_LeftIliac_img, class_prob_frac_LeftIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_LeftIliac_img)
+        predicted_frac_sacrum_img, class_prob_frac_sacrum_img = predict_li_sa_ri_files_from_trainer(trainer, frac_sacrum_img)
+        predicted_frac_RightIliac_img, class_prob_frac_RightIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_RightIliac_img)
+        print('<----------Fracture Segmentation Model completed--------------------->')
 
-    print('<----------Anatomical Model baseline unet completed--------------------->')
+        min_valid_object_size = 500
 
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_LeftIliac_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_LeftIliac_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        li_mask = get_preds(mask_preprocessed_arr, 10)
 
-    # # For Frac_Seg Model 
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_sacrum_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_sacrum_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        sa_mask = get_preds(mask_preprocessed_arr, 0)
 
-    output_dir_anatomical = join(OUTPUT_PATH, 'output_data_anatomical')
-    os.makedirs(join(OUTPUT_PATH, 'output_data_fracsegnet'), exist_ok=True)
-    output_dir_fracsegnet = join(OUTPUT_PATH, 'output_data_fracsegnet')
-    
-    pkl = join(RESOURCE_PATH, 'model_best.model.pkl')
-    checkpoint = pkl[:-4]
-    train = False
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_RightIliac_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_RightIliac_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        ri_mask = get_preds(mask_preprocessed_arr, 20)
 
-    trainer = restore_model(pkl, checkpoint, train)
+        overall_mask = return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob = class_prob_frac_LeftIliac_img, sa_prob = class_prob_frac_sacrum_img, ri_prob=class_prob_frac_RightIliac_img)
 
-    preprocessed_img_folder =  join(output_dir_anatomical, 'splitted_fragments', 'nifty_preprocessed_into_fragments',  'images/*.nii.gz')
+        print(np.unique(overall_mask, return_counts=True))
 
-    for img_name in sorted(glob(preprocessed_img_folder)):
-
-        pelvic_facture_ct = SimpleITK.GetArrayFromImage(SimpleITK.ReadImage(img_name))
-
-        split_name = os.path.split(img_name)
-        only_name = split_name[1].split('_image.nii.gz', 2)[0]
-
-        print(only_name + "_image.nii.gz")
-
-        # print(np.expand_dims(pelvic_facture_ct, axis=0).shape) # extra dimension for channel [1,416,512,512]
-
-        # We also have to put value of data_aug_params from nnunet/training/data_augumentation/default_data_augumentation.py, and since our model is 3d full res model 
-        trainer.data_aug_params = default_3D_augmentation_params
-        # trainer.data_aug_params["do_mirror"] = (0, 1, 2)
-        # this will return tuple of predicted_segmentation, class_probabilities so we take only predicted segmentation
-        _, class_probabilities = trainer.predict_preprocessed_data_return_seg_and_softmax(np.expand_dims(pelvic_facture_ct, axis=0)) 
-
-        
-        # I don't know but the output of model2 labels 1 for smaller bone and 2 for larger bone everytime for the output coming from the
-        # 1st model when feeded to input of 2nd model it gives that. BYou might say you have to do preprocessing first, but after preprocessing 
-        # the output of 2nd model gives worse output, hence we don't do preprocess as before passing to anatomical(1st) model we do necessary preprocessing.
-        # Hence Now, we want to replace model's prediction of  class 1 as class 2 and vice versa. As it gave that error everytime, after the output of anatomical model. 
-        # But on good data the model performs nicely. Hence, we swap class 1 as 2 and class 2 as 1 
-        
-        # print(class_probabilities.shape) # (3, 128, 128, 128)
-        class_probabilities_swapped = class_probabilities.copy()
-        class_probabilities_swapped[1] = class_probabilities[2]
-        class_probabilities_swapped[2] = class_probabilities[1]
-
-
-        predicted_segmentation = np.argmax(class_probabilities_swapped, axis=0)
-        class_probabilities = class_probabilities_swapped
-
-        print(np.unique(predicted_segmentation,return_counts=True))
-
-        # print(class_probabilities.shape) # (3, 61, 60, 110)
-        
-        
-        # The output i.e predicted_segmentation gives 4 rectangular boxes on the endpoints, so to remove it we make the points at the end as 0
-
-        predicted_segmentation[-20:, :, :] = 0     # We take a default parameter 20 after experimentation 
-        predicted_segmentation[:, -20:, :] = 0
-        predicted_segmentation[:, :, -20:] = 0
-        predicted_segmentation[:20, :, :] = 0
-        predicted_segmentation[:, :20, :] = 0
-        predicted_segmentation[:, :, :20] = 0
-
-        sitk.WriteImage(sitk.GetImageFromArray(predicted_segmentation), join(output_dir_fracsegnet, only_name + "_pred.nii.gz"))
-        sitk.WriteImage(sitk.GetImageFromArray(class_probabilities), join(output_dir_fracsegnet, only_name + "_pred_prob.nii.gz"))
-
-    print('<----------Fracture Segmentation Model completed--------------------->')
-
-    # img_number = ['001', '002']
-    # Same operation like line 304 but we automate it.
-    img_number = set()
-    for img in sorted(glob(join(output_dir_fracsegnet, '*_pred.nii.gz'))):
-        img_number.add(os.path.split(img)[1][:3])
-    img_number = list(img_number)
-
-    print(f"Number of image is : {img_number}")
-
-    os.makedirs(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation'), exist_ok=True)
-    final_output_folder = join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')
-
-    for img_num in img_number:
-        # print(img_num)
-        overall_mask_of_whole_img = get_overall_segmentation_of_one_img(img_num, output_dir_fracsegnet)
-        sitk.WriteImage(sitk.GetImageFromArray(overall_mask_of_whole_img), join(final_output_folder, f'{img_num}_overall_pred.mha'))
+        os.makedirs(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation'), exist_ok=True)
+        sitk.WriteImage(sitk.GetImageFromArray(overall_mask), join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation', f'{only_name}_overall_pred.mha'))
 
     # # Save your output
     # # write_array_as_image_file(
@@ -445,39 +366,6 @@ def run():
     # # )
     return 0
 
-
-def load_image_file_as_array(*, location):
-    # Use SimpleITK to read a file
-    input_files = glob(str(location / "*.mha"))
-    result = SimpleITK.ReadImage(input_files[0])
-
-    # Convert it to a Numpy array
-    return SimpleITK.GetArrayFromImage(result)
-
-
-def write_array_as_image_file(*, location, array):
-    location.mkdir(parents=True, exist_ok=True)
-
-    # You may need to change the suffix to .tiff to match the expected output
-    suffix = ".mha"
-
-    image = SimpleITK.GetImageFromArray(array)
-    SimpleITK.WriteImage(
-        image,
-        location / f"output{suffix}",
-        useCompression=True,
-    )
-
-
-def _show_torch_cuda_info():
-    print("=+=" * 10)
-    print("Collecting Torch CUDA information")
-    print(f"Torch CUDA is available: {(available := torch.cuda.is_available())}")
-    if available:
-        print(f"\tnumber of devices: {torch.cuda.device_count()}")
-        print(f"\tcurrent device: { (current_device := torch.cuda.current_device())}")
-        print(f"\tproperties: {torch.cuda.get_device_properties(current_device)}")
-    print("=+=" * 10)
 
 
 if __name__ == "__main__":
