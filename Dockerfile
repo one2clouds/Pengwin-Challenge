@@ -36,7 +36,7 @@ RUN python -m pip install \
     --requirement /opt/app/requirements.txt
 
 RUN python -m pip install gdown 
-# RUN gdown https://drive.google.com/file/d/1TDlfk8tGhMRIvk86nG8yspna2ZZ1-Lf0/view?usp=sharing /opt/app/resources/
+RUN python -m gdown https://drive.google.com/uc?id=1TDlfk8tGhMRIvk86nG8yspna2ZZ1-Lf0 -O /opt/app/resources/
 
 # RUN python -m pip install 'monai[all]==1.1.0'
 
