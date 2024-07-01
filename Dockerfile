@@ -24,6 +24,7 @@ COPY --chown=user:user ./resources/model_best.model.pkl /opt/app/resources/
 # RUN cp ./last.ckpt /opt/app/resources
 # RUN cp ./model_best.model.pkl /opt/app/resources
 
+RUN mkdir -p /opt/app/input/images/pelvic-fracture-ct/
 # COPY Sample ct image for test
 # COPY --chown=user:user ./test/input/*.mha /opt/app/input/images/pelvic-fracture-ct/
 
