@@ -19,7 +19,7 @@ COPY --chown=user:user ./requirements.txt /opt/app/
 # /home/shirshak/Just-nnUNet-not-Overridden-with-FracSegNet-in-venv/PENGWIN-example-algorithm/PENGWIN-challenge-packages/preliminary-development-phase-ct/resources/last.ckpt
 
 COPY --chown=user:user ./resources/best.ckpt /opt/app/resources/
-COPY --chown=user:user ./resources/model_best.model /opt/app/resources/
+# COPY --chown=user:user ./resources/model_best.model /opt/app/resources/
 COPY --chown=user:user ./resources/model_best.model.pkl /opt/app/resources/
 # RUN cp ./last.ckpt /opt/app/resources
 # RUN cp ./model_best.model.pkl /opt/app/resources
@@ -34,6 +34,9 @@ RUN python -m pip install \
     --no-cache-dir \
     --no-color \
     --requirement /opt/app/requirements.txt
+
+RUN python -m pip install gdown 
+# RUN gdown https://drive.google.com/file/d/1TDlfk8tGhMRIvk86nG8yspna2ZZ1-Lf0/view?usp=sharing /opt/app/resources/
 
 # RUN python -m pip install 'monai[all]==1.1.0'
 

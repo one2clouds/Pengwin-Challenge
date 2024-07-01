@@ -481,6 +481,8 @@ def _show_torch_cuda_info():
 
 
 if __name__ == "__main__":
+    import gdown 
+    gdown.download("https://drive.google.com/uc?id=1TDlfk8tGhMRIvk86nG8yspna2ZZ1-Lf0", join(RESOURCE_PATH, 'model_best.model'))
     raise SystemExit(run())
 
 
