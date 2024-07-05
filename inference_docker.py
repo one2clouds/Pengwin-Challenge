@@ -297,17 +297,8 @@ def run():
     print("Just Started")
     sys.stdout.write('Just started ')
 
-    class UNet(nets.UNet):
-        def __init__(self,spatial_dims, in_channels, out_channels, 
-                    channels,strides):
-            super().__init__(spatial_dims, in_channels, out_channels, channels, strides)
-
-        def forward(self, **kwargs) -> torch.Tensor:
-            image = kwargs["image"].unsqueeze(0) # As shape of (1, 1, 128, 128, 128) bs, ch, h, w, d is expected....
-            return super().forward(image)
-
     # Loading Model 1 
-    model = UNet(spatial_dims=3, in_channels=1, out_channels=4, channels=[16,32,64], strides=[2,2])
+    model = nets.UNet(spatial_dims=3, in_channels=1, out_channels=4, channels=[16,32,64], strides=[2,2])
     model_file_state_dict = torch.load(join(RESOURCE_PATH, 'best.ckpt'))['state_dict']
     pretrained_dict = {key.replace("net.", ""): value for key, value in model_file_state_dict.items()}
     model.load_state_dict(pretrained_dict)
@@ -322,15 +313,15 @@ def run():
 
     pelvic_fracture_ct = load_image_file_after_transform(location=INPUT_PATH)
 
-    logits = model.forward(**pelvic_fracture_ct)
+    # print(pelvic_fracture_ct["image"].shape) #torch.Size([1, 128, 128, 128])
+    logits = model.forward(pelvic_fracture_ct["image"].unsqueeze(0)) # as shape needed by model is 1,1,128,128,128 bs,ch,h,w,d 
     softmax_logits = nn.Softmax(dim=1)(logits)
     predicted_segmentation = torch.argmax(softmax_logits, 1)
-    predicted_segmentation = predicted_segmentation.squeeze(dim=0)
 
     print(np.unique(predicted_segmentation, return_counts=True))
     # print(pelvic_fracture_ct["image"].shape) # (1, 128, 128, 128)
-    # print(predicted_segmentation.shape) # (128, 128, 128)
-    frac_LeftIliac_img, frac_sacrum_img, frac_RightIliac_img = saveDiffFrac(sitk.GetImageFromArray(pelvic_fracture_ct["image"][0]), sitk.GetImageFromArray(predicted_segmentation))
+    # print(predicted_segmentation.shape) # (1, 128, 128, 128)
+    frac_LeftIliac_img, frac_sacrum_img, frac_RightIliac_img = saveDiffFrac(sitk.GetImageFromArray(pelvic_fracture_ct["image"][0]), sitk.GetImageFromArray(predicted_segmentation[0]))
 
     sys.stdout.write('<----------Anatomical Model baseline unet completed---------------------> \n')
     # print('<----------Anatomical Model baseline unet completed--------------------->')
