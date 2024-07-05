@@ -282,6 +282,9 @@ def run():
     # FOR Anatomical Model USING UNet baseline 
     # WE DON'T NEED TO CHANGE DIRN OF IMG HERE becoz monai transforms will do it.
 
+    print("Just Started")
+    sys.stdout.write('Just started ')
+
     class HelperDataset(Dataset):
         def __init__(self, file_names, transform):
             self.file_names = file_names
@@ -336,6 +339,10 @@ def run():
     trainer = restore_model(pkl, checkpoint, train)
     # We also have to put value of data_aug_params from nnunet/training/data_augumentation/default_data_augumentation.py, and since our model is 3d full res model 
     trainer.data_aug_params = default_3D_augmentation_params
+
+    print("upto dataloader done")
+    sys.stdout.write('upto dataloader done')
+
 
 
     for data in dataloader:
