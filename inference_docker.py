@@ -49,9 +49,9 @@ from split_img_to_SA_LI_RI import saveDiffFrac
 from monai.networks import nets 
 import torch.nn as nn
 
-INPUT_PATH = Path("./input/images/pelvic-fracture-ct/")
-OUTPUT_PATH = Path("./output")
-RESOURCE_PATH = Path("./resources")
+INPUT_PATH = Path("/input/images/pelvic-fracture-ct/")
+OUTPUT_PATH = Path("/output")
+RESOURCE_PATH = Path("resources")
 
 def change_direction(orig_image):
     new_img = sitk.DICOMOrient(orig_image, 'RAS')
