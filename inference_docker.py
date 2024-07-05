@@ -48,6 +48,7 @@ from split_img_to_SA_LI_RI import saveDiffFrac
 
 from monai.networks import nets 
 import torch.nn as nn
+import sys
 
 INPUT_PATH = Path("/opt/app/input/images/pelvic-fracture-ct/")
 OUTPUT_PATH = Path("output/")
@@ -255,6 +256,20 @@ def predict_li_sa_ri_files_from_trainer(trainer, frac_img):
     return predicted_segmentation, class_probabilities
 
 
+def write_array_as_image_file(*, location, array):
+    location.mkdir(parents=True, exist_ok=True)
+
+    # You may need to change the suffix to .tiff to match the expected output
+    suffix = ".mha"
+
+    image = SimpleITK.GetImageFromArray(array)
+    SimpleITK.WriteImage(
+        image,
+        location / f"output{suffix}",
+        useCompression=True,
+    )
+
+
 def run():
     # Read the input
     # pelvic_facture_ct = load_image_file_as_array(
@@ -333,12 +348,15 @@ def run():
         # print(data["image"].shape) # (1, 1, 128, 128, 128)
         # print(predicted_segmentation.shape) # (128, 128, 128)
         frac_LeftIliac_img, frac_sacrum_img, frac_RightIliac_img = saveDiffFrac(sitk.GetImageFromArray(data["image"][0][0]), sitk.GetImageFromArray(predicted_segmentation))
-        print('<----------Anatomical Model baseline unet completed--------------------->')
+
+        sys.stdout.write('<----------Anatomical Model baseline unet completed--------------------->')
+        # print('<----------Anatomical Model baseline unet completed--------------------->')
 
         predicted_frac_LeftIliac_img, class_prob_frac_LeftIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_LeftIliac_img)
         predicted_frac_sacrum_img, class_prob_frac_sacrum_img = predict_li_sa_ri_files_from_trainer(trainer, frac_sacrum_img)
         predicted_frac_RightIliac_img, class_prob_frac_RightIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_RightIliac_img)
-        print('<----------Fracture Segmentation Model completed--------------------->')
+        sys.stdout.write('<----------Fracture Segmentation Model completed--------------------->')
+        # print('<----------Fracture Segmentation Model completed--------------------->')
 
         min_valid_object_size = 500
 
@@ -356,7 +374,8 @@ def run():
         print(np.unique(overall_mask, return_counts=True))
 
         Path(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')).mkdir(parents=True, exist_ok=True)
-        sitk.WriteImage(sitk.GetImageFromArray(overall_mask), join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation', 'output.mha'), useCompression=True)
+        write_array_as_image_file(location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation", array=overall_mask,)
+        # sitk.WriteImage(sitk.GetImageFromArray(overall_mask), join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation', 'output.mha'), useCompression=True)
 
     # # Save your output
     # # write_array_as_image_file(
