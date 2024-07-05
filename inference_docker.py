@@ -256,6 +256,28 @@ def predict_li_sa_ri_files_from_trainer(trainer, frac_img):
     return predicted_segmentation, class_probabilities
 
 
+
+
+def load_image_file_after_transform(*, location):
+    val_transform = Compose([
+        LoadImaged(keys=["image", "label"]),
+        EnsureChannelFirstd(keys=["image","label"]),
+        EnsureTyped(keys=["image", "label"]),
+        Orientationd(keys=["image", "label"], axcodes="RAS"),
+        Spacingd(keys=["image", "label"],pixdim=(1.0, 1.0, 1.0),mode=("bilinear", "nearest"),),
+        Resized(keys=["image","label"],spatial_size=(128,128,128), mode=("area", "nearest")),
+        # NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+        # RandScaleIntensityd(keys="image", factors=0.1, prob=1.0),
+        # RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
+    ])
+
+    train_images = glob(str(location / "*.mha"))
+    train_labels = train_images.copy()
+    data_dicts = [{"image": image_name, "label": label_name} for image_name, label_name in zip(train_images, train_labels)]
+    result = val_transform(data_dicts[0])
+    return result
+
+
 def write_array_as_image_file(*, location, array):
     location.mkdir(parents=True, exist_ok=True)
 
@@ -271,60 +293,18 @@ def write_array_as_image_file(*, location, array):
 
 
 def run():
-    # Read the input
-    # pelvic_facture_ct = load_image_file_as_array(
-    #     location=INPUT_PATH / "001.mha",
-    # )
-    # # Process the inputs: any way you'd like
-    # _show_torch_cuda_info()
-
-
-    # FOR Anatomical Model USING UNet baseline 
     # WE DON'T NEED TO CHANGE DIRN OF IMG HERE becoz monai transforms will do it.
-
     print("Just Started")
     sys.stdout.write('Just started ')
 
-    class HelperDataset(Dataset):
-        def __init__(self, file_names, transform):
-            self.file_names = file_names
-            self.transform = transform
-
-        def __getitem__(self, index):
-            file_names = self.file_names[index]
-            dataset = self.transform(file_names) 
-            return dataset
-        
-        def __len__(self):
-            return len(self.file_names)
-        
     class UNet(nets.UNet):
         def __init__(self,spatial_dims, in_channels, out_channels, 
                     channels,strides):
             super().__init__(spatial_dims, in_channels, out_channels, channels, strides)
 
         def forward(self, **kwargs) -> torch.Tensor:
-            image = kwargs["image"]
+            image = kwargs["image"].unsqueeze(0) # As shape of (1, 1, 128, 128, 128) bs, ch, h, w, d is expected....
             return super().forward(image)
-        
-    val_transform = Compose([
-            LoadImaged(keys=["image", "label"]),
-            EnsureChannelFirstd(keys=["image","label"]),
-            EnsureTyped(keys=["image", "label"]),
-            Orientationd(keys=["image", "label"], axcodes="RAS"),
-            Spacingd(keys=["image", "label"],pixdim=(1.0, 1.0, 1.0),mode=("bilinear", "nearest"),),
-            Resized(keys=["image","label"],spatial_size=(128,128,128), mode=("area", "nearest")),
-            # NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
-            # RandScaleIntensityd(keys="image", factors=0.1, prob=1.0),
-            # RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
-        ])
-    
-    train_images = sorted(glob(join(INPUT_PATH, '*.mha')))
-    train_labels = train_images.copy() #sorted(glob(join(INPUT_PATH, '*_label.mha')))
-    data_dicts = [{"image": image_name, "label": label_name} for image_name, label_name in zip(train_images, train_labels)]
-
-    my_dataset = HelperDataset(data_dicts, val_transform)
-    dataloader = DataLoader(dataset=my_dataset, batch_size=1)
 
     # Loading Model 1 
     model = UNet(spatial_dims=3, in_channels=1, out_channels=4, channels=[16,32,64], strides=[2,2])
@@ -340,55 +320,44 @@ def run():
     # We also have to put value of data_aug_params from nnunet/training/data_augumentation/default_data_augumentation.py, and since our model is 3d full res model 
     trainer.data_aug_params = default_3D_augmentation_params
 
-    print("upto dataloader done")
-    sys.stdout.write('upto dataloader done')
+    pelvic_fracture_ct = load_image_file_after_transform(location=INPUT_PATH)
 
+    logits = model.forward(**pelvic_fracture_ct)
+    softmax_logits = nn.Softmax(dim=1)(logits)
+    predicted_segmentation = torch.argmax(softmax_logits, 1)
+    predicted_segmentation = predicted_segmentation.squeeze(dim=0)
 
+    print(np.unique(predicted_segmentation, return_counts=True))
+    # print(pelvic_fracture_ct["image"].shape) # (1, 128, 128, 128)
+    # print(predicted_segmentation.shape) # (128, 128, 128)
+    frac_LeftIliac_img, frac_sacrum_img, frac_RightIliac_img = saveDiffFrac(sitk.GetImageFromArray(pelvic_fracture_ct["image"][0]), sitk.GetImageFromArray(predicted_segmentation))
 
-    for data in dataloader:
-        logits = model.forward(**data)
-        softmax_logits = nn.Softmax(dim=1)(logits)
-        predicted_segmentation = torch.argmax(softmax_logits, 1)
-        predicted_segmentation = predicted_segmentation.squeeze(dim=0)
+    sys.stdout.write('<----------Anatomical Model baseline unet completed---------------------> \n')
+    # print('<----------Anatomical Model baseline unet completed--------------------->')
 
-        print(np.unique(predicted_segmentation, return_counts=True))
-        # print(data["image"].shape) # (1, 1, 128, 128, 128)
-        # print(predicted_segmentation.shape) # (128, 128, 128)
-        frac_LeftIliac_img, frac_sacrum_img, frac_RightIliac_img = saveDiffFrac(sitk.GetImageFromArray(data["image"][0][0]), sitk.GetImageFromArray(predicted_segmentation))
+    predicted_frac_LeftIliac_img, class_prob_frac_LeftIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_LeftIliac_img)
+    predicted_frac_sacrum_img, class_prob_frac_sacrum_img = predict_li_sa_ri_files_from_trainer(trainer, frac_sacrum_img)
+    predicted_frac_RightIliac_img, class_prob_frac_RightIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_RightIliac_img)
+    sys.stdout.write('<----------Fracture Segmentation Model completed---------------------> \n')
+    # print('<----------Fracture Segmentation Model completed--------------------->')
 
-        sys.stdout.write('<----------Anatomical Model baseline unet completed--------------------->')
-        # print('<----------Anatomical Model baseline unet completed--------------------->')
+    min_valid_object_size = 500
 
-        predicted_frac_LeftIliac_img, class_prob_frac_LeftIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_LeftIliac_img)
-        predicted_frac_sacrum_img, class_prob_frac_sacrum_img = predict_li_sa_ri_files_from_trainer(trainer, frac_sacrum_img)
-        predicted_frac_RightIliac_img, class_prob_frac_RightIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_RightIliac_img)
-        sys.stdout.write('<----------Fracture Segmentation Model completed--------------------->')
-        # print('<----------Fracture Segmentation Model completed--------------------->')
+    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_LeftIliac_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_LeftIliac_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+    li_mask = get_preds(mask_preprocessed_arr, 10)
 
-        min_valid_object_size = 500
+    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_sacrum_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_sacrum_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+    sa_mask = get_preds(mask_preprocessed_arr, 0)
 
-        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_LeftIliac_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_LeftIliac_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-        li_mask = get_preds(mask_preprocessed_arr, 10)
+    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_RightIliac_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_RightIliac_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+    ri_mask = get_preds(mask_preprocessed_arr, 20)
 
-        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_sacrum_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_sacrum_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-        sa_mask = get_preds(mask_preprocessed_arr, 0)
+    overall_mask = return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob = class_prob_frac_LeftIliac_img, sa_prob = class_prob_frac_sacrum_img, ri_prob=class_prob_frac_RightIliac_img)
 
-        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_RightIliac_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_RightIliac_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-        ri_mask = get_preds(mask_preprocessed_arr, 20)
+    print(np.unique(overall_mask, return_counts=True))
 
-        overall_mask = return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob = class_prob_frac_LeftIliac_img, sa_prob = class_prob_frac_sacrum_img, ri_prob=class_prob_frac_RightIliac_img)
-
-        print(np.unique(overall_mask, return_counts=True))
-
-        Path(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')).mkdir(parents=True, exist_ok=True)
-        write_array_as_image_file(location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation", array=overall_mask,)
-        # sitk.WriteImage(sitk.GetImageFromArray(overall_mask), join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation', 'output.mha'), useCompression=True)
-
-    # # Save your output
-    # # write_array_as_image_file(
-    # #     location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation",
-    # #     array=pelvic_fracture_segmentation,
-    # # )
+    Path(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')).mkdir(parents=True, exist_ok=True)
+    write_array_as_image_file(location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation", array=overall_mask)
     return 0
 
 
