@@ -355,7 +355,7 @@ def run():
 
         print(np.unique(overall_mask, return_counts=True))
 
-        os.makedirs(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation'), exist_ok=True)
+        Path(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')).mkdir(parents=True, exist_ok=True)
         sitk.WriteImage(sitk.GetImageFromArray(overall_mask), join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation', 'output.mha'), useCompression=True)
 
     # # Save your output
