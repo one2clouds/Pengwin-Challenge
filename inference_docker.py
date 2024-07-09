@@ -270,12 +270,15 @@ def load_image_file_after_transform(*, location):
         # RandScaleIntensityd(keys="image", factors=0.1, prob=1.0),
         # RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
     ])
-
+    
     train_images = glob(str(location / "*.mha"))
-    train_labels = train_images.copy()
-    data_dicts = [{"image": image_name, "label": label_name} for image_name, label_name in zip(train_images, train_labels)]
-    result = val_transform(data_dicts[0])
-    return result
+    if train_images:
+        train_labels = train_images.copy()
+        data_dicts = [{"image": image_name, "label": label_name} for image_name, label_name in zip(train_images, train_labels)]
+        result = val_transform(data_dicts[0])
+        return result
+    else:
+        return None
 
 
 def write_array_as_image_file(*, location, array):
@@ -295,7 +298,7 @@ def write_array_as_image_file(*, location, array):
 def run():
     # WE DON'T NEED TO CHANGE DIRN OF IMG HERE becoz monai transforms will do it.
     print("Just Started")
-    sys.stdout.write('Just started ')
+    sys.stdout.write('Just started \n')
 
     # Loading Model 1 
     model = nets.UNet(spatial_dims=3, in_channels=1, out_channels=4, channels=[16,32,64], strides=[2,2])
@@ -313,42 +316,45 @@ def run():
 
     pelvic_fracture_ct = load_image_file_after_transform(location=INPUT_PATH)
 
-    # print(pelvic_fracture_ct["image"].shape) #torch.Size([1, 128, 128, 128])
-    logits = model.forward(pelvic_fracture_ct["image"].unsqueeze(0)) # as shape needed by model is 1,1,128,128,128 bs,ch,h,w,d 
-    softmax_logits = nn.Softmax(dim=1)(logits)
-    predicted_segmentation = torch.argmax(softmax_logits, 1)
+    if pelvic_fracture_ct is not None:
+        # print(pelvic_fracture_ct["image"].shape) #torch.Size([1, 128, 128, 128])
+        logits = model.forward(pelvic_fracture_ct["image"].unsqueeze(0)) # as shape needed by model is 1,1,128,128,128 bs,ch,h,w,d 
+        softmax_logits = nn.Softmax(dim=1)(logits)
+        predicted_segmentation = torch.argmax(softmax_logits, 1)
 
-    print(np.unique(predicted_segmentation, return_counts=True))
-    # print(pelvic_fracture_ct["image"].shape) # (1, 128, 128, 128)
-    # print(predicted_segmentation.shape) # (1, 128, 128, 128)
-    frac_LeftIliac_img, frac_sacrum_img, frac_RightIliac_img = saveDiffFrac(sitk.GetImageFromArray(pelvic_fracture_ct["image"][0]), sitk.GetImageFromArray(predicted_segmentation[0]))
+        print(np.unique(predicted_segmentation, return_counts=True))
+        # print(pelvic_fracture_ct["image"].shape) # (1, 128, 128, 128)
+        # print(predicted_segmentation.shape) # (1, 128, 128, 128)
+        frac_LeftIliac_img, frac_sacrum_img, frac_RightIliac_img = saveDiffFrac(sitk.GetImageFromArray(pelvic_fracture_ct["image"][0]), sitk.GetImageFromArray(predicted_segmentation[0]))
 
-    sys.stdout.write('<----------Anatomical Model baseline unet completed---------------------> \n')
-    # print('<----------Anatomical Model baseline unet completed--------------------->')
+        sys.stdout.write('<----------Anatomical Model baseline unet completed---------------------> \n')
+        # print('<----------Anatomical Model baseline unet completed--------------------->')
 
-    predicted_frac_LeftIliac_img, class_prob_frac_LeftIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_LeftIliac_img)
-    predicted_frac_sacrum_img, class_prob_frac_sacrum_img = predict_li_sa_ri_files_from_trainer(trainer, frac_sacrum_img)
-    predicted_frac_RightIliac_img, class_prob_frac_RightIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_RightIliac_img)
-    sys.stdout.write('<----------Fracture Segmentation Model completed---------------------> \n')
-    # print('<----------Fracture Segmentation Model completed--------------------->')
+        predicted_frac_LeftIliac_img, class_prob_frac_LeftIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_LeftIliac_img)
+        predicted_frac_sacrum_img, class_prob_frac_sacrum_img = predict_li_sa_ri_files_from_trainer(trainer, frac_sacrum_img)
+        predicted_frac_RightIliac_img, class_prob_frac_RightIliac_img = predict_li_sa_ri_files_from_trainer(trainer, frac_RightIliac_img)
+        sys.stdout.write('<----------Fracture Segmentation Model completed---------------------> \n')
+        # print('<----------Fracture Segmentation Model completed--------------------->')
 
-    min_valid_object_size = 500
+        min_valid_object_size = 500
 
-    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_LeftIliac_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_LeftIliac_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-    li_mask = get_preds(mask_preprocessed_arr, 10)
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_LeftIliac_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_LeftIliac_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        li_mask = get_preds(mask_preprocessed_arr, 10)
 
-    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_sacrum_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_sacrum_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-    sa_mask = get_preds(mask_preprocessed_arr, 0)
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_sacrum_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_sacrum_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        sa_mask = get_preds(mask_preprocessed_arr, 0)
 
-    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_RightIliac_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_RightIliac_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-    ri_mask = get_preds(mask_preprocessed_arr, 20)
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_RightIliac_img, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_RightIliac_img).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        ri_mask = get_preds(mask_preprocessed_arr, 20)
 
-    overall_mask = return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob = class_prob_frac_LeftIliac_img, sa_prob = class_prob_frac_sacrum_img, ri_prob=class_prob_frac_RightIliac_img)
+        overall_mask = return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob = class_prob_frac_LeftIliac_img, sa_prob = class_prob_frac_sacrum_img, ri_prob=class_prob_frac_RightIliac_img)
 
-    print(np.unique(overall_mask, return_counts=True))
+        print(np.unique(overall_mask, return_counts=True))
 
-    Path(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')).mkdir(parents=True, exist_ok=True)
-    write_array_as_image_file(location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation", array=overall_mask)
+        Path(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')).mkdir(parents=True, exist_ok=True)
+        write_array_as_image_file(location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation", array=overall_mask)
+    else:
+        print("the image is none")
     return 0
 
 
