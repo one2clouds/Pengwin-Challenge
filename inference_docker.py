@@ -51,7 +51,7 @@ import torch.nn as nn
 import sys
 
 INPUT_PATH = Path("/opt/app/input/images/pelvic-fracture-ct/")
-OUTPUT_PATH = Path("output/")
+OUTPUT_PATH = Path("/output/")
 RESOURCE_PATH = Path("/opt/app/resources/")
 
 def change_direction(orig_image):
