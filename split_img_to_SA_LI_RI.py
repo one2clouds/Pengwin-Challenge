@@ -15,6 +15,10 @@ def extractSingleFrac(ct_scale_img, ct_label_img, label):
     # ct_label_img = sitk.ReadImage(ct_label_fileName)
     ct_origin_arr = sitk.GetArrayFromImage(ct_scale_img)  # get array from image
     ct_label_arr = sitk.GetArrayFromImage(ct_label_img)  # get array from image
+    # ct_label_arr = np.swapaxes(ct_label_arr, 0, 2)
+
+    # print(ct_origin_arr.shape) # (286, 238, 459)
+    # print(ct_scale_img.GetSize()) # (459, 238, 286)
     frac_Grayscale_img = ct_origin_arr.copy()
 
     if label == 1:

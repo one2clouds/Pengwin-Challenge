@@ -16,7 +16,11 @@ WORKDIR /opt/app
 # RUN git clone https://github.com/MIC-DKFZ/nnUNet.git
 
 COPY --chown=user:user ./requirements.txt /opt/app/
-# /home/shirshak/Just-nnUNet-not-Overridden-with-FracSegNet-in-venv/PENGWIN-example-algorithm/PENGWIN-challenge-packages/preliminary-development-phase-ct/resources/last.ckpt
+RUN python -m pip install \
+    --user \
+    --no-cache-dir \
+    --no-color \
+    --requirement /opt/app/requirements.txt
 
 COPY --chown=user:user ./resources/best.ckpt /opt/app/resources/
 # COPY --chown=user:user ./resources/model_best.model /opt/app/resources/
@@ -24,29 +28,22 @@ COPY --chown=user:user ./resources/model_best.model.pkl /opt/app/resources/
 # RUN cp ./last.ckpt /opt/app/resources
 # RUN cp ./model_best.model.pkl /opt/app/resources
 
-RUN mkdir -p /opt/app/input/images/pelvic-fracture-ct/
-# COPY Sample ct image for test
-# COPY --chown=user:user ./test/input/*.mha /opt/app/input/images/pelvic-fracture-ct/
-
-# COPY --chown=user:user ./dataset/
-
-RUN python -m pip install \
-    --user \
-    --no-cache-dir \
-    --no-color \
-    --requirement /opt/app/requirements.txt
-
 RUN python -m pip install gdown 
 RUN python -m gdown https://drive.google.com/uc?id=1TDlfk8tGhMRIvk86nG8yspna2ZZ1-Lf0 -O /opt/app/resources/
 
-# RUN python -m pip install 'monai[all]==1.1.0'
+
+# RUN mkdir -p /opt/app/input/images/pelvic-fracture-ct/
+# RUN mkdir -p ./input/images/pelvic-fracture-ct/
+# RUN mkdir -p ./output/images/pelvic-fracture-ct-segmentation/
+# COPY Sample ct image for test
+# COPY --chown=user:user ./test/input/* ./input/images/pelvic-fracture-ct/
 
 COPY --chown=user:user ./split_img_to_SA_LI_RI.py /opt/app/
 COPY --chown=user:user ./inference_docker.py /opt/app/
 
 # COPY NEEDED FILES FOR LOADING 1ST MODEL 
-COPY --chown=user:user ./base_module.py /opt/app/src/models/
-COPY --chown=user:user ./unet.py /opt/app/src/models/
+COPY --chown=user:user ./src/models/base_module.py /opt/app/src/models/
+COPY --chown=user:user ./src/models/unet.py /opt/app/src/models/
 
 ENTRYPOINT ["python", "inference_docker.py"]
 

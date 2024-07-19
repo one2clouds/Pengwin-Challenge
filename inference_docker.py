@@ -37,7 +37,7 @@ import torch
 import os 
 from scipy.ndimage import label
 from torch.utils.data import Dataset, DataLoader
-from monai.transforms import Resized, Compose, LoadImaged, Orientationd, Spacingd, EnsureTyped, EnsureChannelFirstd, AsDiscrete
+from monai.transforms import Resized, Compose, LoadImaged, Orientationd, Spacingd, EnsureTyped, EnsureChannelFirstd, AsDiscrete, CastToTyped, Resize
 from nnunet.training.network_training.nnUNetTrainer import nnUNetTrainer
 import nnunet
 from collections import OrderedDict
@@ -50,7 +50,7 @@ from monai.networks import nets
 import torch.nn as nn
 import sys
 
-INPUT_PATH = Path("/opt/app/input/images/pelvic-fracture-ct/")
+INPUT_PATH = Path("/input/")
 OUTPUT_PATH = Path("/output/")
 RESOURCE_PATH = Path("/opt/app/resources/")
 
@@ -261,6 +261,7 @@ def predict_li_sa_ri_files_from_trainer(trainer, frac_img):
 def load_image_file_after_transform(*, location):
     val_transform = Compose([
         LoadImaged(keys=["image", "label"]),
+        # CastToTyped(keys=["image", "label"], dtype=torch.int8),
         EnsureChannelFirstd(keys=["image","label"]),
         EnsureTyped(keys=["image", "label"]),
         Orientationd(keys=["image", "label"], axcodes="RAS"),
@@ -270,26 +271,24 @@ def load_image_file_after_transform(*, location):
         # RandScaleIntensityd(keys="image", factors=0.1, prob=1.0),
         # RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
     ])
-    
     train_images = glob(str(location / "*.mha"))
     if train_images:
         train_labels = train_images.copy()
         data_dicts = [{"image": image_name, "label": label_name} for image_name, label_name in zip(train_images, train_labels)]
         result = val_transform(data_dicts[0])
-        return result
+        return result, train_images[0]
     else:
-        return None
+        return (None, None)
 
 
-def write_array_as_image_file(*, location, array):
+def write_array_as_image_file(*, location, itk_image):
     location.mkdir(parents=True, exist_ok=True)
 
     # You may need to change the suffix to .tiff to match the expected output
     suffix = ".mha"
 
-    image = SimpleITK.GetImageFromArray(array)
     SimpleITK.WriteImage(
-        image,
+        itk_image,
         location / f"output{suffix}",
         useCompression=True,
     )
@@ -314,7 +313,8 @@ def run():
     # We also have to put value of data_aug_params from nnunet/training/data_augumentation/default_data_augumentation.py, and since our model is 3d full res model 
     trainer.data_aug_params = default_3D_augmentation_params
 
-    pelvic_fracture_ct = load_image_file_after_transform(location=INPUT_PATH)
+    # we take img_shape, and original_image for retrieving the shape and sizes of the overall image after prediction from first model. 
+    pelvic_fracture_ct, original_image_name = load_image_file_after_transform(location=INPUT_PATH / "images/pelvic-fracture-ct")
 
     if pelvic_fracture_ct is not None:
         # print(pelvic_fracture_ct["image"].shape) #torch.Size([1, 128, 128, 128])
@@ -349,10 +349,33 @@ def run():
 
         overall_mask = return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob = class_prob_frac_LeftIliac_img, sa_prob = class_prob_frac_sacrum_img, ri_prob=class_prob_frac_RightIliac_img)
 
+        overall_mask = overall_mask.astype(np.int8)
         print(np.unique(overall_mask, return_counts=True))
 
-        Path(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')).mkdir(parents=True, exist_ok=True)
-        write_array_as_image_file(location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation", array=overall_mask)
+        # model output completed ----------------
+        orig_reader = sitk.ImageFileReader()
+        orig_reader.SetFileName(original_image_name)
+        orig_reader.ReadImageInformation()
+        
+        original_size = np.array(orig_reader.GetSize())
+        original_size[0],original_size[-1] = original_size[-1],original_size[0]
+
+        # resize to original shape
+        overall_mask_resized = Resize(spatial_size=list(original_size),mode='nearest')(np.expand_dims(overall_mask,axis=0))[0] # undo expand_dims
+
+        # convert to mha
+        overall_mask_resized_sitk = sitk.GetImageFromArray(overall_mask_resized)
+        overall_mask_resized_sitk.SetSpacing(orig_reader.GetSpacing())
+        overall_mask_resized_sitk.SetDirection((-1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0))
+        # convert to original orientation
+        original_orientation = sitk.DICOMOrientImageFilter_GetOrientationFromDirectionCosines(orig_reader.GetDirection())
+        overall_mask_resized_reoriented_sitk = sitk.DICOMOrient(overall_mask_resized_sitk,original_orientation)
+
+        print('<----------Upto Model orientation completed---------------------> \n')
+
+        # print(overall_mask_resized_reoriented_sitk.GetSize())
+        # Path(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')).mkdir(parents=True, exist_ok=True)
+        write_array_as_image_file(location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation", itk_image = overall_mask_resized_reoriented_sitk)
     else:
         print("the image is none")
     return 0
