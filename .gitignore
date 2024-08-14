@@ -136,6 +136,9 @@ venv.bak/
 .spyderproject
 .spyproject
 
+*.tar.gz
+*.mha
+
 # Rope project settings
 .ropeproject
 

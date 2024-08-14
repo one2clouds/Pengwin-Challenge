@@ -35,4 +35,4 @@ def check_voxels_resolution_and_size():
 if __name__ == '__main__':
     df = check_voxels_resolution_and_size()
     print(df)
-    df.to_csv('zzz_tests/occurances_of_labels.csv')
+    # df.to_csv('zzz_tests/occurances_of_labels.csv')
