@@ -22,14 +22,17 @@ RUN python -m pip install \
     --no-color \
     --requirement /opt/app/requirements.txt
 
-COPY --chown=user:user ./resources/best.ckpt /opt/app/resources/
+# First Model 
+# COPY --chown=user:user ./resources/best.ckpt /opt/app/resources/
+COPY --chown=user:user ./resources/* /opt/app/resources/
+
 # COPY --chown=user:user ./resources/model_best.model /opt/app/resources/
-COPY --chown=user:user ./resources/model_best.model.pkl /opt/app/resources/
+# COPY --chown=user:user ./resources/model_best.model.pkl /opt/app/resources/
 # RUN cp ./last.ckpt /opt/app/resources
 # RUN cp ./model_best.model.pkl /opt/app/resources
 
-RUN python -m pip install gdown 
-RUN python -m gdown https://drive.google.com/uc?id=1TDlfk8tGhMRIvk86nG8yspna2ZZ1-Lf0 -O /opt/app/resources/
+# RUN python -m pip install gdown 
+# RUN python -m gdown https://drive.google.com/uc?id=1TDlfk8tGhMRIvk86nG8yspna2ZZ1-Lf0 -O /opt/app/resources/
 
 
 # RUN mkdir -p /opt/app/input/images/pelvic-fracture-ct/
@@ -48,8 +51,7 @@ COPY --chown=user:user ./src/models/unet.py /opt/app/src/models/
 ENTRYPOINT ["python", "inference_docker.py"]
 
 
-
-
+# RUN test_run.sh file instead of below
 # docker build -t docker_just_nnunet -f ./Dockerfile .
 # docker run -it --rm --name docker_just_nnunet --gpus all --mount source=volume-just_nnunet,destination=/opt/app/output/ nvidia/cuda:11.0.3-base-ubuntu20.04 nvidia-smi
 # docker run -it --gpus all docker_just_nnunet

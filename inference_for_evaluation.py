@@ -30,30 +30,40 @@ from nnunet.inference.predict_simple import predict_from_folder
 from nnunet.training.model_restore import recursive_find_python_class #, load_model_and_checkpoint_files, restore_model
 import numpy as np
 
-from nnunetv2.imageio.simpleitk_reader_writer import SimpleITKIO
-# from nnUNet.nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
+# from nnUNet.nnunetv2.imageio.simpleitk_reader_writer import SimpleITKIO
+from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 from batchgenerators.utilities.file_and_folder_operations import join
 import torch 
 import os 
 from scipy.ndimage import label
 from torch.utils.data import Dataset, DataLoader
-from monai.transforms import Resized, Compose, LoadImaged, Orientationd, Spacingd, EnsureTyped, EnsureChannelFirstd, AsDiscrete, CastToTyped, Resize, Orientation, Spacing
+from monai.transforms import Resized, Compose, LoadImaged, Orientationd, Spacing, Spacingd, EnsureTyped, EnsureChannelFirstd, AsDiscrete, CastToTyped, Resize, Resample, ResizeWithPadOrCrop
 from nnunet.training.network_training.nnUNetTrainer import nnUNetTrainer
 import nnunet
 from collections import OrderedDict
 from nnunet.training.data_augmentation.default_data_augmentation import default_3D_augmentation_params
 
-from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 
 from split_img_to_SA_LI_RI import saveDiffFrac
+from nnunetv2.imageio.simpleitk_reader_writer import SimpleITKIO 
 
 from monai.networks import nets 
 import torch.nn as nn
 import sys
+from evaluation_CT_core import load_image_file, load_gt_label_and_spacing, evaluate_3d_single_case
 
-INPUT_PATH = Path("/input/")
-OUTPUT_PATH = Path("/output/")
-RESOURCE_PATH = Path("/opt/app/resources/")
+import rootutils 
+rootutils.setup_root("/home/shirshak/lightning-hydra-template", indicator=".project-root", pythonpath=True)
+
+from evaluation_CT_core import evaluate_3d_single_case
+
+
+
+INPUT_PATH = Path("/home/shirshak/Pengwin_Submission_Portal/test/input")
+LABEL_PATH = Path("/home/shirshak/Pengwin_Submission_Portal/test/label")
+OUTPUT_PATH = Path("/home/shirshak/Pengwin_Submission_Portal/test/output")
+RESOURCE_PATH = Path("/home/shirshak/Pengwin_Submission_Portal/resources")
+
 
 def change_direction(orig_image):
     new_img = sitk.DICOMOrient(orig_image, 'RAS')
@@ -149,25 +159,8 @@ def return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob, sa_prob,
     assert ri_mask.shape == li_mask.shape ==sa_mask.shape == li_prob.shape == ri_prob.shape == sa_prob.shape
     overall_mask = np.zeros_like(li_mask)
 
-    for i in range(ri_mask.shape[0]):
-        for j in range(ri_mask.shape[1]):
-            for k in range(ri_mask.shape[2]):
-                my_dict = {}
-                # print(li_mask[i][j][k])
-                if li_mask[i][j][k] != 0:
-                    my_dict[li_mask[i][j][k]] = li_prob[i][j][k]
-
-                if ri_mask[i][j][k] != 0:
-                    my_dict[ri_mask[i][j][k]] = ri_prob[i][j][k]
-
-                if sa_mask[i][j][k] != 0:
-                    my_dict[sa_mask[i][j][k]] = sa_prob[i][j][k]
-
-                # This even works if there is only one element in dict
-                if len(my_dict) != 0 :
-                    overall_mask[i][j][k] = max(my_dict, key=my_dict.get)
-                else:
-                    overall_mask[i][j][k] = 0
+    overall_mask = li_mask + ri_mask + sa_mask      # for quick submission
+    
     return overall_mask 
 
 # taken from nnunet.training.model_restore.py -> restore_model -> trainer.load_checkpoint() 
@@ -216,7 +209,7 @@ def restore_model(pkl_file, checkpoint=None, train=False, fp16=None):
 
     # taken from nnunet.training.model_restore.py -> restore_model -> trainer.load_checkpoint() 
     trainer.process_plans(info['plans'])
-    saved_model = torch.load(checkpoint, map_location=torch.device('cuda'))
+    saved_model = torch.load(checkpoint, map_location=torch.device('cpu'))
 
     # Now this(upto return statement) is taken from nnunet.training.network_trainer.network_trainer.py -> load_checkpoint -> trainer.load_checkpoint_ram function
     new_state_dict = OrderedDict()
@@ -232,18 +225,14 @@ def restore_model(pkl_file, checkpoint=None, train=False, fp16=None):
 
     trainer.initialize_network()
     trainer.network.load_state_dict(new_state_dict)
-
     return trainer
 
 
 def predict_li_sa_ri_files_from_trainer(trainer, frac_array):
-
-    predicted_segmentation, class_probabilities = trainer.predict_preprocessed_data_return_seg_and_softmax(np.expand_dims(frac_array, axis=0))
-
+    predicted_segmentation, class_probabilities = trainer.predict_preprocessed_data_return_seg_and_softmax(np.expand_dims(frac_array, axis=0)) 
     # class_probabilities_swapped = class_probabilities.copy()
     # class_probabilities_swapped[1] = class_probabilities[2]
     # class_probabilities_swapped[2] = class_probabilities[1]
-
     # predicted_segmentation = np.argmax(class_probabilities_swapped, axis=0)
     # class_probabilities = class_probabilities_swapped
 
@@ -258,53 +247,25 @@ def predict_li_sa_ri_files_from_trainer(trainer, frac_array):
     return predicted_segmentation, class_probabilities
 
 
-
-
-def load_image_file_after_transform(*, location):
-
-    train_images = glob(str(location / "*.mha"))
-    
-    orig_reader = sitk.ImageFileReader()
-    orig_reader.SetFileName(train_images[0])
-    orig_reader.ReadImageInformation()
-
-    original_arr, props = SimpleITKIO().read_images([train_images[0]])
-    print(original_arr.shape)
-    return orig_reader, original_arr, props
-
-
-
-def write_array_as_image_file(*, location, itk_image):
-    location.mkdir(parents=True, exist_ok=True)
-
-    # You may need to change the suffix to .tiff to match the expected output
-    suffix = ".mha"
-
-    SimpleITK.WriteImage(
-        itk_image,
-        location / f"output{suffix}",
-        useCompression=True,
-    )
-
-
 def run():
     # WE DON'T NEED TO CHANGE DIRN OF IMG HERE becoz monai transforms will do it.
-    print('Just started \n')
+    print("Just Started")
+    sys.stdout.write('Just started \n')
 
     # Loading Model 1 
     predictor = nnUNetPredictor(
         tile_step_size=0.5,
-        use_gaussian=False, # True
-        use_mirroring=False, # True
+        use_gaussian=False,#True,
+        use_mirroring=False, #True,
         perform_everything_on_device=True,
-        device=torch.device('cuda'),
+        device=torch.device('cuda', 0),
         verbose=True,
         verbose_preprocessing=True,
-        # allow_tqdm=True
+        allow_tqdm=True
     )
 
     predictor.initialize_from_trained_model_folder(
-        join(RESOURCE_PATH, 'nnUNetTrainer__nnUNetPlans__3d_lowres'),
+        join('/home/shirshak/Pengwin_Submission_Portal/resources', 'Dataset604_CT_PelvicFrac150/nnUNetTrainer__nnUNetPlans__3d_lowres'),
         use_folds=(4,),
         checkpoint_name='checkpoint_best.pth',
     )
@@ -316,56 +277,67 @@ def run():
     trainer = restore_model(pkl, checkpoint, train)
     # We also have to put value of data_aug_params from nnunet/training/data_augumentation/default_data_augumentation.py, and since our model is 3d full res model 
     trainer.data_aug_params = default_3D_augmentation_params
-    
 
     # we take img_shape, and original_image for retrieving the shape and sizes of the overall image after prediction from first model. 
-    original_reader, original_arr, props = load_image_file_after_transform(location=INPUT_PATH / "images/pelvic-fracture-ct")
-    predicted_segmentation, _ = predictor.predict_single_npy_array(original_arr, props, None, None, True)
 
-    frac_LeftIliac_arr, frac_sacrum_arr, frac_RightIliac_arr = saveDiffFrac(original_arr, predicted_segmentation)
+    for img_index, (train_img, train_label) in enumerate(zip(sorted(glob(str(INPUT_PATH / "images/pelvic-fracture-ct/*.mha"))), sorted(glob(str(LABEL_PATH / "*.mha")))), 1):
+        original_img = sitk.ReadImage(train_img)
+        original_arr, props = SimpleITKIO().read_images([train_img])
 
-    # sys.stdout.write('<----------Anatomical Model baseline unet completed---------------------> \n')
-    print('<----------Anatomical Model baseline unet completed--------------------->')
+        predicted_segmentation, class_probabilities = predictor.predict_single_npy_array(original_arr, props, None, None, True)
+        
+        print(np.unique(predicted_segmentation, return_counts=True))
+        print(predicted_segmentation.shape)
+    
+        frac_LeftIliac_arr, frac_sacrum_arr, frac_RightIliac_arr = saveDiffFrac(original_arr, predicted_segmentation)
 
-    predicted_frac_LeftIliac_arr, class_prob_frac_LeftIliac_arr = predict_li_sa_ri_files_from_trainer(trainer, frac_LeftIliac_arr)
-    predicted_frac_sacrum_arr, class_prob_frac_sacrum_arr = predict_li_sa_ri_files_from_trainer(trainer, frac_sacrum_arr)
-    predicted_frac_RightIliac_arr, class_prob_frac_RightIliac_arr = predict_li_sa_ri_files_from_trainer(trainer, frac_RightIliac_arr)
-    sys.stdout.write('<----------Fracture Segmentation Model completed---------------------> \n')
-    # print('<----------Fracture Segmentation Model completed--------------------->')
+        sys.stdout.write('<----------Anatomical Model baseline unet completed---------------------> \n')
+        # print('<----------Anatomical Model baseline unet completed--------------------->')
 
-    min_valid_object_size = 500
+        predicted_frac_LeftIliac_arr, class_prob_frac_LeftIliac_arr = predict_li_sa_ri_files_from_trainer(trainer, frac_LeftIliac_arr)
+        predicted_frac_sacrum_arr, class_prob_frac_sacrum_arr = predict_li_sa_ri_files_from_trainer(trainer, frac_sacrum_arr)
+        predicted_frac_RightIliac_arr, class_prob_frac_RightIliac_arr = predict_li_sa_ri_files_from_trainer(trainer, frac_RightIliac_arr)
+        sys.stdout.write('<----------Fracture Segmentation Model completed---------------------> \n')
+        # print('<----------Fracture Segmentation Model completed--------------------->')
 
-    # We know that getImageFromArray gives the default spacing of 1, but we have already performed transformation of spacing as 1 so, there is no problem there. 
+        min_valid_object_size = 500
 
-    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_LeftIliac_arr, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_LeftIliac_arr).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-    li_mask = get_preds(mask_preprocessed_arr, 10)
+        # We know that getImageFromArray gives the default spacing of 1, but we have already performed transformation of spacing as 1 so, there is no problem there. 
 
-    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_sacrum_arr, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_sacrum_arr).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-    sa_mask = get_preds(mask_preprocessed_arr, 0)
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_LeftIliac_arr, for_which_classes=None, volume_per_voxel=float(np.prod(original_img.GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        li_mask = get_preds(mask_preprocessed_arr, 10)
 
-    mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_RightIliac_arr, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_RightIliac_arr).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
-    ri_mask = get_preds(mask_preprocessed_arr, 20)
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_sacrum_arr, for_which_classes=None, volume_per_voxel=float(np.prod(original_img.GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        sa_mask = get_preds(mask_preprocessed_arr, 0)
 
-    overall_mask = return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob = class_prob_frac_LeftIliac_arr, sa_prob = class_prob_frac_sacrum_arr, ri_prob=class_prob_frac_RightIliac_arr)
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_RightIliac_arr, for_which_classes=None, volume_per_voxel=float(np.prod(original_img.GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        ri_mask = get_preds(mask_preprocessed_arr, 20)
 
-    overall_mask = overall_mask.astype(np.int8)
-    print(np.unique(overall_mask, return_counts=True))
-    print(overall_mask.shape)
+        overall_mask = return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob = class_prob_frac_LeftIliac_arr, sa_prob = class_prob_frac_sacrum_arr, ri_prob=class_prob_frac_RightIliac_arr)
 
-    overall_mask_img = sitk.GetImageFromArray(overall_mask)
-    overall_mask_img.SetSpacing(original_reader.GetSpacing())
-    overall_mask_img.SetDirection(original_reader.GetDirection())
-    overall_mask_img.SetOrigin(original_reader.GetOrigin())
+        overall_mask = overall_mask.astype(np.int8)
+        print(np.unique(overall_mask, return_counts=True))
+        print(overall_mask.shape)
 
-    print('<----------Upto Model orientation completed---------------------> \n')
+        overall_mask_img = sitk.GetImageFromArray(overall_mask)
+        overall_mask_img.SetSpacing(original_img.GetSpacing())
+        overall_mask_img.SetDirection(original_img.GetDirection())
+        overall_mask_img.SetOrigin(original_img.GetOrigin())
 
-    # print(overall_mask_resized_reoriented_sitk.GetSize())
-    # Path(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')).mkdir(parents=True, exist_ok=True)
-    write_array_as_image_file(location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation", itk_image = overall_mask_img)
+        print('<----------Upto Model orientation completed---------------------> \n')
+
+
+        Path(OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation").mkdir(parents=True, exist_ok=True)
+
+        sitk.WriteImage(overall_mask_img, Path(OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation") / f"{img_index}.mha", useCompression=True)
+
+        spacing, gt_volume = load_gt_label_and_spacing(Path(train_label))
+
+        metrics_single_case = evaluate_3d_single_case(gt_volume, overall_mask, spacing, verbose=True)
+
+        print(metrics_single_case)
 
     return 0
-
-
 
 if __name__ == "__main__":
     # import gdown 
@@ -374,11 +346,5 @@ if __name__ == "__main__":
 
 
 # PYTHONPATH=/path/to/Project python script.py
-# PYTHONPATH=/home/shirshak/Anatomical_Segmentation_Frac-Seg-Net python3 /home/shirshak/Just-nnUNet-not-Overridden-with-FracSegNet-in-venv/PENGWIN-example-algorithm/PENGWIN-challenge-packages/preliminary-development-phase-ct/inference.py
+# python3 inference.py
 
-
-
-
-
-# For inferencing this you could use bash script 
-# bash test_run

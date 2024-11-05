@@ -3,6 +3,7 @@ import SimpleITK as sitk
 import glob 
 from tqdm import tqdm 
 import numpy as np
+import torch 
 
 
 def maybe_mkdir_p(directory: str) -> None:
@@ -11,7 +12,11 @@ def maybe_mkdir_p(directory: str) -> None:
 
 # input: ct_origin_fileName,ct_label_fileName,label output:frac_Grayscale==label
 def extractSingleFrac(ct_origin_arr, ct_label_arr, label):
-    frac_Grayscale_arr = ct_origin_arr.clone() # .copy() for array .clone() for tensor
+
+    # print(ct_label_arr.shape) # (401, 512, 512)
+    # print(ct_origin_arr.shape) # (1, 401, 512, 512)
+
+    frac_Grayscale_arr = np.squeeze(ct_origin_arr, 0).copy() # .copy() for array .clone() for tensor
 
     if label == 1:
         frac_Grayscale_arr[ct_label_arr != 1] = 0

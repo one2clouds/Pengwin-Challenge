@@ -31,7 +31,7 @@ from nnunet.training.model_restore import recursive_find_python_class #, load_mo
 import numpy as np
 
 # from nnUNet.nnunetv2.imageio.simpleitk_reader_writer import SimpleITKIO
-# from nnUNet.nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
+from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 from batchgenerators.utilities.file_and_folder_operations import join
 import torch 
 import os 
@@ -45,6 +45,7 @@ from nnunet.training.data_augmentation.default_data_augmentation import default_
 
 
 from split_img_to_SA_LI_RI import saveDiffFrac
+from nnunetv2.imageio.simpleitk_reader_writer import SimpleITKIO 
 
 from monai.networks import nets 
 import torch.nn as nn
@@ -241,13 +242,12 @@ def restore_model(pkl_file, checkpoint=None, train=False, fp16=None):
 
 
 def predict_li_sa_ri_files_from_trainer(trainer, frac_array):
-    _, class_probabilities = trainer.predict_preprocessed_data_return_seg_and_softmax(np.expand_dims(frac_array, axis=0)) 
-    class_probabilities_swapped = class_probabilities.copy()
-    class_probabilities_swapped[1] = class_probabilities[2]
-    class_probabilities_swapped[2] = class_probabilities[1]
-
-    predicted_segmentation = np.argmax(class_probabilities_swapped, axis=0)
-    class_probabilities = class_probabilities_swapped
+    predicted_segmentation, class_probabilities = trainer.predict_preprocessed_data_return_seg_and_softmax(np.expand_dims(frac_array, axis=0)) 
+    # class_probabilities_swapped = class_probabilities.copy()
+    # class_probabilities_swapped[1] = class_probabilities[2]
+    # class_probabilities_swapped[2] = class_probabilities[1]
+    # predicted_segmentation = np.argmax(class_probabilities_swapped, axis=0)
+    # class_probabilities = class_probabilities_swapped
 
     # The output i.e predicted_segmentation gives 4 rectangular boxes on the endpoints, so to remove it we make the points at the end as 0
     predicted_segmentation[-20:, :, :] = 0     # We take a default parameter 20 after experimentation 
@@ -261,29 +261,12 @@ def predict_li_sa_ri_files_from_trainer(trainer, frac_array):
 
 
 
-
-def load_image_file_after_transform(*, location, val_transform):
-    # val_transform = Compose([
-    #     LoadImaged(keys=["image", "label"]),
-    #     # CastToTyped(keys=["image", "label"], dtype=torch.int8),
-    #     EnsureChannelFirstd(keys=["image","label"]),
-    #     EnsureTyped(keys=["image", "label"]),
-    #     Orientationd(keys=["image", "label"], axcodes="RAS"),
-    #     Spacingd(keys=["image", "label"],pixdim=(1.0, 1.0, 1.0),mode=("bilinear", "nearest"),),
-    #     Resized(keys=["image","label"],spatial_size=(128,128,128), mode=("area", "nearest")),
-    #     # NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
-    #     # RandScaleIntensityd(keys="image", factors=0.1, prob=1.0),
-    #     # RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
-    # ])
+def load_image_file_after_transform(*, location):
     train_images = glob(str(location / "*.mha"))
-    if train_images:
-        train_labels = train_images.copy()
-        data_dicts = [{"image": image_name, "label": label_name} for image_name, label_name in zip(train_images, train_labels)]
-        result = val_transform(data_dicts[0])
-        return result, train_images[0]
-    else:
-        return (None, None)
-
+    original_img = sitk.ReadImage(train_images[0])
+    original_arr, props = SimpleITKIO().read_images([train_images[0]])
+    return original_img, original_arr, props
+    
 
 def write_array_as_image_file(*, location, itk_image):
     location.mkdir(parents=True, exist_ok=True)
@@ -304,10 +287,22 @@ def run():
     sys.stdout.write('Just started \n')
 
     # Loading Model 1 
-    model = nets.UNet(spatial_dims=3, in_channels=1, out_channels=4, channels=[16,32,64], strides=[2,2])
-    model_file_state_dict = torch.load(join(RESOURCE_PATH, 'best.ckpt'))['state_dict']
-    pretrained_dict = {key.replace("net.", ""): value for key, value in model_file_state_dict.items()}
-    model.load_state_dict(pretrained_dict)
+    predictor = nnUNetPredictor(
+        tile_step_size=0.5,
+        use_gaussian=False,#True,
+        use_mirroring=False, #True,
+        perform_everything_on_device=True,
+        device=torch.device('cuda', 0),
+        verbose=True,
+        verbose_preprocessing=True,
+        allow_tqdm=True
+    )
+
+    predictor.initialize_from_trained_model_folder(
+        join('/home/shirshak/Pengwin_Submission_Portal/resources', 'Dataset604_CT_PelvicFrac150/nnUNetTrainer__nnUNetPlans__3d_lowres'),
+        use_folds=(4,),
+        checkpoint_name='checkpoint_best.pth',
+    )
 
     # Loading Model 2
     pkl = join(RESOURCE_PATH, 'model_best.model.pkl')
@@ -317,29 +312,17 @@ def run():
     # We also have to put value of data_aug_params from nnunet/training/data_augumentation/default_data_augumentation.py, and since our model is 3d full res model 
     trainer.data_aug_params = default_3D_augmentation_params
 
-    val_transform = Compose([
-        LoadImaged(keys=["image", "label"]),
-        # CastToTyped(keys=["image", "label"], dtype=torch.int8),
-        EnsureChannelFirstd(keys=["image","label"]),
-        EnsureTyped(keys=["image", "label"]),
-        Orientationd(keys=["image", "label"], axcodes="RAS"),
-        Spacingd(keys=["image", "label"],pixdim=(1.0, 1.0, 1.0),mode=("bilinear", "nearest"),),
-        Resized(keys=["image","label"],spatial_size=(128,128,128), mode=("area", "nearest")),
-        # NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
-        # RandScaleIntensityd(keys="image", factors=0.1, prob=1.0),
-        # RandShiftIntensityd(keys="image", offsets=0.1, prob=1.0),
-    ])
-
     # we take img_shape, and original_image for retrieving the shape and sizes of the overall image after prediction from first model. 
-    pelvic_fracture_ct, original_image_name = load_image_file_after_transform(location=INPUT_PATH / "images/pelvic-fracture-ct", val_transform = val_transform)
+    original_img, original_arr, props = load_image_file_after_transform(location=INPUT_PATH / "images/pelvic-fracture-ct")
 
-    if pelvic_fracture_ct is not None:
-        # print(pelvic_fracture_ct["image"].shape) #torch.Size([1, 128, 128, 128])
-        logits = model.forward(pelvic_fracture_ct["image"].unsqueeze(0)) # as shape needed by model is 1,1,128,128,128 bs,ch,h,w,d 
-        softmax_logits = nn.Softmax(dim=1)(logits)
-        predicted_segmentation = torch.argmax(softmax_logits, 1)
+    if original_arr is not None:
 
-        frac_LeftIliac_arr, frac_sacrum_arr, frac_RightIliac_arr = saveDiffFrac(pelvic_fracture_ct["image"][0], predicted_segmentation[0])
+        predicted_segmentation, class_probabilities = predictor.predict_single_npy_array(original_arr, props, None, None, True)
+        
+        print(np.unique(predicted_segmentation, return_counts=True))
+        print(predicted_segmentation.shape)
+    
+        frac_LeftIliac_arr, frac_sacrum_arr, frac_RightIliac_arr = saveDiffFrac(original_arr, predicted_segmentation)
 
         sys.stdout.write('<----------Anatomical Model baseline unet completed---------------------> \n')
         # print('<----------Anatomical Model baseline unet completed--------------------->')
@@ -354,69 +337,33 @@ def run():
 
         # We know that getImageFromArray gives the default spacing of 1, but we have already performed transformation of spacing as 1 so, there is no problem there. 
 
-        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_LeftIliac_arr, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_LeftIliac_arr).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_LeftIliac_arr, for_which_classes=None, volume_per_voxel=float(np.prod(original_img.GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
         li_mask = get_preds(mask_preprocessed_arr, 10)
 
-        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_sacrum_arr, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_sacrum_arr).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_sacrum_arr, for_which_classes=None, volume_per_voxel=float(np.prod(original_img.GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
         sa_mask = get_preds(mask_preprocessed_arr, 0)
 
-        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_RightIliac_arr, for_which_classes=None, volume_per_voxel=float(np.prod(sitk.GetImageFromArray(predicted_frac_RightIliac_arr).GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
+        mask_preprocessed_arr = separate_labels_for_non_connected_splitted_fragments(predicted_frac_RightIliac_arr, for_which_classes=None, volume_per_voxel=float(np.prod(original_img.GetSpacing(), dtype=np.float64)), minimum_valid_object_size=min_valid_object_size)
         ri_mask = get_preds(mask_preprocessed_arr, 20)
 
         overall_mask = return_one_with_max_probability(li_mask, sa_mask, ri_mask, li_prob = class_prob_frac_LeftIliac_arr, sa_prob = class_prob_frac_sacrum_arr, ri_prob=class_prob_frac_RightIliac_arr)
 
         overall_mask = overall_mask.astype(np.int8)
         print(np.unique(overall_mask, return_counts=True))
+        print(overall_mask.shape)
 
+        overall_mask_img = sitk.GetImageFromArray(overall_mask)
+        overall_mask_img.SetSpacing(original_img.GetSpacing())
+        overall_mask_img.SetDirection(original_img.GetDirection())
+        overall_mask_img.SetOrigin(original_img.GetOrigin())
 
-        orig_reader = sitk.ImageFileReader()
-        orig_reader.SetFileName(original_image_name)
-        orig_reader.ReadImageInformation()
-        original_size = np.array(orig_reader.GetSize())
-        # original_size[0],original_size[-1] = original_size[-1],original_size[0]
-        overall_mask_resized = Resize(spatial_size=list(original_size),mode='nearest')(np.expand_dims(overall_mask, 0))[0] # expanded dimension is unexpanded
-
-        overall_mask_resized = torch.swapaxes(overall_mask_resized, 0, 2)
-
-        overall_mask_resized_sitk = sitk.GetImageFromArray(np.int8(overall_mask_resized))
-        overall_mask_resized_sitk.SetSpacing(orig_reader.GetSpacing())
-        overall_mask_resized_sitk.SetDirection((-1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0))
-        overall_mask_resized_sitk.SetOrigin(orig_reader.GetOrigin())
-        original_orientation = sitk.DICOMOrientImageFilter_GetOrientationFromDirectionCosines(orig_reader.GetDirection())
-        overall_mask_resized_reoriented_sitk = sitk.DICOMOrient(overall_mask_resized_sitk,original_orientation)
-
-        # overall_seg_dict = {"label":predicted_segmentation}
-        # with allow_missing_keys_mode(val_transform):
-        #     overall_segmentation_post_transform = val_transform.inverse(overall_seg_dict)["label"][0] # we take 0th term because, there is extra channel dimension....
-        # # print(overall_segmentation_post_transform.shape) #torch.Size([512, 512, 303])
-        # # print(orig_reader.GetSize()) #(512, 512, 303)
-        # overall_segmentation_post_transform = torch.swapaxes(overall_segmentation_post_transform, 0, 2) # swapping axes because monai read row-wise and sitk read column-wise
-        # # Because after interpolation our some values are float so...
-        # print(overall_segmentation_post_transform.unique())
-        # overall_segmentation_post_transform = np.ceil(overall_segmentation_post_transform)
-        # print(np.unique(overall_segmentation_post_transform, return_counts=True))
-        # orig_reader = sitk.ImageFileReader()
-        # orig_reader.SetFileName(original_image_name)
-        # orig_reader.ReadImageInformation()
-        # overall_mask_resized_sitk = sitk.GetImageFromArray(overall_segmentation_post_transform)
-        # overall_mask_resized_sitk.SetSpacing(orig_reader.GetSpacing())
-        # original_orientation = sitk.DICOMOrientImageFilter_GetOrientationFromDirectionCosines(orig_reader.GetDirection())
-        # overall_mask_resized_reoriented_sitk = sitk.DICOMOrient(overall_mask_resized_sitk,original_orientation)
-        
-        
         print('<----------Upto Model orientation completed---------------------> \n')
+
 
         # print(overall_mask_resized_reoriented_sitk.GetSize())
         # Path(join(OUTPUT_PATH, 'images/pelvic-fracture-ct-segmentation')).mkdir(parents=True, exist_ok=True)
-        write_array_as_image_file(location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation", itk_image = overall_mask_resized_reoriented_sitk)
+        write_array_as_image_file(location=OUTPUT_PATH / "images/pelvic-fracture-ct-segmentation", itk_image = overall_mask_img)
 
-        # For evaluation and metric check 
-        # TODO REMOVE THIS WHILE SUBMITTING
-        pred_volume = load_image_file(location=Path("/home/shirshak/Pengwin_Submission_Portal/test/output/images/pelvic-fracture-ct-segmentation"))
-        spacing, gt_volume = load_gt_label_and_spacing(Path("/home/shirshak/Pengwin_Submission_Portal/test/label/201.mha"))
-        metrics_single_case = evaluate_3d_single_case(gt_volume, pred_volume, spacing, verbose = True)
-
-        print(metrics_single_case)
     else:
         print("the image is none")
     return 0
